@@ -1,101 +1,109 @@
 using UnityEngine;
 
-// SORUMLULUK: ROKET İVMELEMESİ ve ROTASYON KONTROLÜ
+[RequireComponent(typeof(Rigidbody))]
 public class DroneController : MonoBehaviour
 {
-    [Header("Roket Kontrol Ayarları")]
-    [Tooltip("Roketin ileri itme kuvveti.")]
-    public float thrustForce = 50f; 
-    
-    [Tooltip("Drone'un dönme hızı.")]
-    public float rotationSpeed = 150f;
-    
-    // Frenleme artık manueldir (kod ile aktif frenleme kaldırıldı). 
-    // Drone, itki kesilince süzülmeye devam eder.
+    [Header("Uçuş Güç Ayarları")]
+    public float verticalThrustForce = 40f;
+    public float horizontalStrafeForce = 40f;
 
-    [Header("Referanslar")]
+    [Header("Fizik ve Limitler")]
+    public float maxVelocity = 10f;
+    public float droneDrag = 2f;
+
+    [Header("Görsel Efektler (Tilt)")]
+    [Tooltip("Dönmesi gereken 3D Model objesi.")]
+    public Transform droneModelTransform;
+
+    [Tooltip("Maksimum kaç derece yatabilir?")]
+    public float maxTiltAngle = 30f;
+
+    [Tooltip("Yatma işleminin yumuşaklık hızı.")]
+    public float tiltSpeed = 5f;
+
+    // Referanslar
     private Rigidbody rb;
-    private float rotationInput;
-    private bool isThrusting; 
-    private Health droneHealth; 
-
-    // --- TEMEL UNITY FONKSİYONLARI ---
+    private float verticalInput;
+    private float horizontalInput;
 
     void Start()
     {
         rb = GetComponent<Rigidbody>();
-        droneHealth = GetComponent<Health>(); 
-        
-        if (rb == null || droneHealth == null)
+        rb.useGravity = true;
+        rb.linearDamping = droneDrag;
+        // Fizik motoru dönmeyi engeller, biz modeli kodla döndüreceğiz.
+        rb.constraints = RigidbodyConstraints.FreezePositionZ | RigidbodyConstraints.FreezeRotation;
+
+        // Eğer model atanmadıysa, hata vermesin diye uyaralım
+        if (droneModelTransform == null)
         {
-            Debug.LogError("HATA: Gerekli bileşenler (Rigidbody VEYA Health) Drone_Player üzerinde bulunamadı!");
+            Debug.LogWarning("DİKKAT: 'Drone Model Transform' slotu boş! Görsel eğilme çalışmaz.");
         }
     }
 
     void Update()
     {
         ProcessInput();
+
+        // Görsel güncellemeleri Update içinde yaparız (Daha akıcı görünür)
+        HandleVisualTilt();
     }
 
     void FixedUpdate()
     {
-        // Fizik motoru içinde sadece döndürme ve itme kuvveti uygulanır.
-        ApplyRotation();
-        ApplyThrust();
-        // ApplyBraking() KESİNLİKLE KALDIRILDI. Drone serbest süzülür.
-    }
-    
-    void OnCollisionEnter(Collision collision)
-    {
-        if (droneHealth == null) return;
-
-        float impactVelocity = collision.relativeVelocity.magnitude;
-        
-        if (impactVelocity > droneHealth.criticalDamageVelocity)
-        {
-            droneHealth.TakeDamage(20); 
-        }
-        // Hafif çarpışma geri bildirimi (ses/görsel için) burada ele alınır.
+        ApplyForces();
+        LimitVelocity();
     }
 
     // --- ÖZEL FONKSİYONLAR ---
 
     private void ProcessInput()
     {
-        // 1. İvme Kontrolü (Space ile İleri Git)
-        isThrusting = Input.GetKey(KeyCode.Space);
-
-        // 2. Rotasyon Kontrolü (A/D ile Dön)
-        rotationInput = Input.GetAxisRaw("Horizontal"); // A (-1) veya D (1)
-
-        // Yükseklik/Alçalma kontrolü artık yok.
+        verticalInput = Input.GetAxisRaw("Vertical");
+        horizontalInput = Input.GetAxisRaw("Horizontal");
     }
 
-    private void ApplyRotation()
+    private void ApplyForces()
     {
-        if (rotationInput != 0)
+        if (verticalInput != 0)
         {
-            // Angular Velocity yerine Quaternion kullanmak, arcade dönüş için daha akıcıdır.
-            // Rotasyon, Y ekseninde (dünya Z ekseni derinlik olduğu için) yapılır.
-            float rotationAmount = rotationInput * rotationSpeed * Time.fixedDeltaTime;
-            Quaternion deltaRotation = Quaternion.Euler(0f, 0f, -rotationAmount); // -Y ekseni etrafında döndür
-            rb.MoveRotation(rb.rotation * deltaRotation);
+            rb.AddForce(Vector3.up * verticalInput * verticalThrustForce, ForceMode.Acceleration);
+        }
+
+        if (horizontalInput != 0)
+        {
+            rb.AddForce(Vector3.right * horizontalInput * horizontalStrafeForce, ForceMode.Acceleration);
         }
     }
 
-    private void ApplyThrust()
+    private void LimitVelocity()
     {
-        if (isThrusting)
+        if (rb.linearVelocity.magnitude > maxVelocity)
         {
-            // İtkiyi, drone'un baktığı yöne (Transform.up) uygula.
-            // 2D/2.5D düzlemde ileri yön genellikle Y (up) eksenidir.
-            Vector3 thrustDirection = transform.up; 
-            
-            // Eğer oyun XZ düzlemindeyse, burası 'transform.forward' olmalıdır.
-            // Bizim oyunumuz XY düzleminde (2.5D) olduğu için up kullanıyoruz.
-            rb.AddForce(thrustDirection * thrustForce, ForceMode.Acceleration);
+            rb.linearVelocity = Vector3.ClampMagnitude(rb.linearVelocity, maxVelocity);
         }
     }
-    
-    // ApplyBraking metodu artık yoktur.
+
+    private void HandleVisualTilt()
+    {
+        if (droneModelTransform == null) return;
+
+        // Hedef açıyı hesapla:
+        // Hız (Velocity) bazlı yatma, daha gerçekçi görünür.
+        // Hız ne kadar yüksekse o kadar çok yatar (maxTiltAngle'a kadar).
+        // Eksi (-) ile çarpıyoruz çünkü sağa (+X) giderken Z ekseninde eksi yöne dönmesi gerekir.
+        float targetZAngle = -rb.linearVelocity.x * 2f; // 2f çarpanı hassasiyeti artırır
+
+        // Açıyı maksimum değerle sınırla (Kelebek gibi takla atmasın)
+        targetZAngle = Mathf.Clamp(targetZAngle, -maxTiltAngle, maxTiltAngle);
+
+        // Mevcut açıdan hedef açıya yumuşak geçiş (Interpolation)
+        Quaternion targetRotation = Quaternion.Euler(0, 0, targetZAngle);
+
+        droneModelTransform.localRotation = Quaternion.Slerp(
+            droneModelTransform.localRotation,
+            targetRotation,
+            Time.deltaTime * tiltSpeed
+        );
+    }
 }
