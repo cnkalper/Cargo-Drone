@@ -2,22 +2,24 @@ using UnityEngine;
 
 public class CargoGrabber : MonoBehaviour
 {
-    [Header("Mýknatýs Ayarlarý")]
-    public float grabRadius = 1.5f;
+    [Header("Magnet Settings")]
+    public float grabRadius = 0.8f;
     public LayerMask cargoLayer;
-    public Transform grabPoint;
+    public Transform grabPoint; // 'AttachPoint' buraya gelecek
 
-    [Header("Durum")]
+    [Header("Fine Tuning")]
+    [Tooltip("Otomatik hesaplamanýn üzerine eklenecek mini pay (0.05 idealdir).")]
+    public float skinWidth = 0.05f;
+
+    [Header("State")]
     public bool isCarrying = false;
     private GameObject currentCargo;
-    private FixedJoint grabJoint;
+    private HingeJoint grabJoint;
 
     void Update()
     {
         if (Input.GetKeyDown(KeyCode.Space))
         {
-            Debug.Log("SPACE tuþuna basýldý. Ýþlem baþlýyor..."); // KONTROL 1
-
             if (isCarrying)
             {
                 DropCargo();
@@ -31,62 +33,86 @@ public class CargoGrabber : MonoBehaviour
 
     private void TryGrabCargo()
     {
-        // Alaný tara
         Collider[] hitColliders = Physics.OverlapSphere(transform.position, grabRadius, cargoLayer);
 
-        // KONTROL 2: Etrafta kaç tane 'Cargo' katmanlý obje buldu?
-        Debug.Log("Tarama yapýldý. Bulunan kargo sayýsý: " + hitColliders.Length);
+        foreach (Collider col in hitColliders)
+        {
+            if (col.gameObject == gameObject) continue;
+            if (col.transform.root == transform.root) continue;
 
-        if (hitColliders.Length > 0)
-        {
-            GameObject cargoCandidate = hitColliders[0].gameObject;
-            Debug.Log("Bulunan Kargo: " + cargoCandidate.name); // KONTROL 3
-            AttachCargo(cargoCandidate);
-        }
-        else
-        {
-            Debug.LogWarning("HATA: Kanca menzilinde 'Cargo' katmanýnda obje yok! Layer ayarýný kontrol et.");
+            AttachCargo(col.gameObject);
+            return;
         }
     }
 
     private void AttachCargo(GameObject cargo)
     {
-        if (grabPoint == null)
-        {
-            Debug.LogError("HATA: 'Grab Point' (Tutma Noktasý) scriptte atanmamýþ!");
-            return;
-        }
+        if (grabPoint == null) return;
 
         currentCargo = cargo;
         isCarrying = true;
 
-        cargo.transform.position = grabPoint.position;
-        cargo.transform.rotation = grabPoint.rotation;
+        // --- 1. ÖNCE KARGOYU SAKÝNLEÞTÝR (Dönme sorununu çözer) ---
+        Rigidbody cargoRb = cargo.GetComponent<Rigidbody>();
+        cargoRb.linearVelocity = Vector3.zero;
+        cargoRb.angularVelocity = Vector3.zero;
 
-        grabJoint = gameObject.AddComponent<FixedJoint>();
-        grabJoint.connectedBody = cargo.GetComponent<Rigidbody>();
-        grabJoint.breakForce = Mathf.Infinity;
+        // Kargonun açýsýný düzeltiyoruz ki köþesi kancaya girmesin
+        cargo.transform.rotation = Quaternion.identity;
 
-        Debug.Log("BAÞARILI: Kargo baðlandý!");
+        // --- 2. OTOMATÝK BOYUT HESAPLAMA (Her boyuta uyar) ---
+        Collider cargoCol = cargo.GetComponent<Collider>();
+
+        // 'extents.y' bize objenin merkezinden en tepesine olan mesafeyi verir.
+        float objectHalfHeight = cargoCol.bounds.extents.y;
+
+        // Kargo Pozisyonu = Kanca - (Yarým Boy + Ufak Bir Pay)
+        Vector3 targetPosition = grabPoint.position - (Vector3.up * (objectHalfHeight + skinWidth));
+
+        cargo.transform.position = targetPosition;
+
+        // --- 3. BAÐLANTIYI KUR (HINGE JOINT) ---
+        grabJoint = gameObject.AddComponent<HingeJoint>();
+        grabJoint.connectedBody = cargoRb;
+
+        grabJoint.autoConfigureConnectedAnchor = false;
+        grabJoint.anchor = Vector3.zero; // Kancanýn ucu (AttachPoint)
+
+        // Kargo üzerindeki baðlantý noktasý: Tam tepesi (Local Space)
+        // Kargo düzeltildiði için (Rotation identity), tepesi her zaman (0, Height, 0)'dýr.
+        // Ancak daha garanti olmasý için relative hesaplýyoruz:
+        Vector3 localConnectionPoint = cargo.transform.InverseTransformPoint(grabPoint.position);
+        grabJoint.connectedAnchor = localConnectionPoint;
+
+        grabJoint.axis = Vector3.forward; // Z ekseninde sallan
+
+        // Çarpýþmayý kapat
+        Physics.IgnoreCollision(GetComponent<Collider>(), cargoCol, true);
+
+        Debug.Log($"CargoGrabber: Grabbed {cargo.name} (Height: {objectHalfHeight})");
     }
 
     private void DropCargo()
     {
+        if (currentCargo != null)
+        {
+            Collider cargoCol = currentCargo.GetComponent<Collider>();
+            Physics.IgnoreCollision(GetComponent<Collider>(), cargoCol, false);
+
+            Rigidbody cargoRb = currentCargo.GetComponent<Rigidbody>();
+            if (cargoRb)
+            {
+                cargoRb.WakeUp();
+            }
+        }
+
         if (grabJoint != null)
         {
             Destroy(grabJoint);
         }
 
-        if (currentCargo != null)
-        {
-            // Kutuyu biraz uyandýr, havada donup kalmasýn
-            Rigidbody cargoRb = currentCargo.GetComponent<Rigidbody>();
-            if (cargoRb) cargoRb.WakeUp();
-        }
-
         currentCargo = null;
         isCarrying = false;
-        Debug.Log("Kargo býrakýldý.");
     }
 
     void OnDrawGizmosSelected()
