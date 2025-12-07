@@ -92,7 +92,8 @@ public class CargoGrabber : MonoBehaviour
         Debug.Log($"CargoGrabber: Grabbed {cargo.name} (Height: {objectHalfHeight})");
     }
 
-    private void DropCargo()
+    // "private" yerine "public" yapýyoruz ki WinchController buna ulaþabilsin.
+    public void DropCargo()
     {
         if (currentCargo != null)
         {

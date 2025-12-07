@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using System.Collections; // BU SATIR ÞART! (Coroutine için)
 
 public class GameManager : MonoBehaviour
 {
@@ -7,9 +8,14 @@ public class GameManager : MonoBehaviour
 
     [Header("UI References")]
     public GameObject gameOverUI;
+    public GameObject winUI;
 
     [Header("Player References")]
-    public DroneController playerDrone; // YENÝ: Drone'u buraya tanýtacaðýz
+    public DroneController playerDrone;
+
+    [Header("Win Settings")]
+    [Tooltip("Kazandýktan sonra oyunun durmasý için kaç saniye beklensin?")]
+    public float winDelay = 2.0f; // Varsayýlan 2 saniye bekle
 
     private bool isGameOver = false;
 
@@ -23,6 +29,8 @@ public class GameManager : MonoBehaviour
         {
             Destroy(gameObject);
         }
+
+        Time.timeScale = 1f;
     }
 
     void Update()
@@ -38,32 +46,47 @@ public class GameManager : MonoBehaviour
         if (isGameOver) return;
 
         isGameOver = true;
-        Debug.Log("Game Over! Controls disabled.");
+        Debug.Log("Game Over!");
 
-        // 1. UI'ý aç
-        if (gameOverUI != null)
-        {
-            gameOverUI.SetActive(true);
-        }
+        if (gameOverUI != null) gameOverUI.SetActive(true);
 
-        // 2. DRONE KONTROLLERÝNÝ KAPAT (YENÝ KISIM)
         if (playerDrone != null)
         {
-            // Uçuþu durdur
             playerDrone.enabled = false;
-
-            // Halat kontrolünü de durdur (Varsa)
             WinchController winch = playerDrone.GetComponent<WinchController>();
             if (winch != null) winch.enabled = false;
-
-            // Fiziksel olarak yere düþmesini istersen buna dokunma.
-            // Havada asýlý kalsýn (dursun) istersen þu satýrý aç:
-            // playerDrone.GetComponent<Rigidbody>().isKinematic = true; 
         }
+    }
+
+    public void LevelComplete()
+    {
+        if (isGameOver) return;
+
+        isGameOver = true; // Oyunu "bitti" moduna al ama henüz durdurma
+        Debug.Log("YOU WIN! Waiting for delay...");
+
+        // Gecikmeli bitiþi baþlat
+        StartCoroutine(WinSequence());
+    }
+
+    // Zamanlayýcý Fonksiyon
+    IEnumerator WinSequence()
+    {
+        // Belirlenen süre kadar bekle (Oyun bu sýrada akmaya devam eder)
+        yield return new WaitForSeconds(winDelay);
+
+        // --- SÜRE DOLDU, ÞÝMDÝ DURDUR ---
+
+        // 1. Kazanma Ekranýný Aç
+        if (winUI != null) winUI.SetActive(true);
+
+        // 2. Oyunu Durdur
+        Time.timeScale = 0f;
     }
 
     private void RestartGame()
     {
+        Time.timeScale = 1f;
         SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
     }
 }

@@ -2,43 +2,88 @@ using UnityEngine;
 
 public class WinchController : MonoBehaviour
 {
-    [Header("Referanslar")]
+    [Header("References")]
     public Transform hookTransform;
     public Transform winchOrigin;
     public LineRenderer cableVisual;
 
-    [Header("Kablo Uzunlu�u")]
+    [Header("Cable Length")]
     public float currentLength = 2f;
     public float minLength = 0.8f;
     public float maxLength = 10f;
     public float winchSpeed = 2f;
 
-    [Header("Fizik Ayarlar�")]
+    [Header("Physics Settings")]
     public float springForce = 200f;
     public float damperForce = 10f;
 
-    [Header("Savrulma Engelleyici (Yumu�ak)")]
-    [Tooltip("Halat�n dikeyden yapabilece�i maksimum a�� (Derece).")]
+    [Header("Stabilizer")]
     public float maxSwingAngle = 60f;
-
-    [Tooltip("D�zeltme kuvveti �arpan� (Daha d���k de�er = Daha yumu�ak).")]
-    public float stabilityGain = 2f; // �nceki gibi sabit g�� de�il, �arpan kullanaca��z
-
-    [Tooltip("S�n�r a��ld���nda uygulanacak ekstra s�rt�nme (H�z� �ld�r�r).")]
+    public float stabilityGain = 2f;
     public float stabilityDrag = 5f;
+
+    [Header("Rope Collision (Snapping)")]
+    public LayerMask obstacleLayer; // Select 'Obstacle' layer here
+    public Color normalColor = Color.black;
+    public Color warningColor = Color.red;
+
+    [Tooltip("How long can the rope touch a wall before breaking?")]
+    public float breakTime = 2f;
+    private float contactTimer = 0f;
 
     private SpringJoint joint;
     private Rigidbody hookRb;
-    private float defaultDrag; // Kancan�n orijinal s�rt�nmesini hat�rlamak i�in
+    private float defaultDrag;
+
+    // To drop cargo when rope breaks
+    private CargoGrabber hookGrabber;
 
     void Start()
     {
         if (hookTransform == null || winchOrigin == null) return;
 
         hookRb = hookTransform.GetComponent<Rigidbody>();
-        defaultDrag = hookRb.linearDamping; // Orijinal ayar� kaydet
+        defaultDrag = hookRb.linearDamping;
 
-        // Joint Kurulumu
+        // Get the CargoGrabber to force drop if rope breaks
+        hookGrabber = hookTransform.GetComponent<CargoGrabber>();
+
+        // Joint Setup
+        SetupJoint();
+
+        // Default visual setup
+        if (cableVisual != null)
+        {
+            cableVisual.startColor = normalColor;
+            cableVisual.endColor = normalColor;
+        }
+
+        Physics.IgnoreCollision(GetComponent<Collider>(), hookTransform.GetComponent<Collider>());
+    }
+
+    void Update()
+    {
+        // If rope is broken (joint is null), stop everything
+        if (joint == null)
+        {
+            cableVisual.enabled = false;
+            return;
+        }
+
+        HandleWinchInput();
+        UpdateCableVisual();
+        CheckRopeCollision(); // NEW: Check if hitting walls
+
+        joint.maxDistance = currentLength;
+    }
+
+    void FixedUpdate()
+    {
+        if (joint != null) ApplySwingStabilization();
+    }
+
+    private void SetupJoint()
+    {
         joint = gameObject.AddComponent<SpringJoint>();
         joint.connectedBody = hookRb;
         joint.autoConfigureConnectedAnchor = false;
@@ -48,24 +93,6 @@ public class WinchController : MonoBehaviour
         joint.damper = damperForce;
         joint.maxDistance = currentLength;
         joint.minDistance = 0;
-
-        Physics.IgnoreCollision(GetComponent<Collider>(), hookTransform.GetComponent<Collider>());
-    }
-
-    void Update()
-    {
-        HandleWinchInput();
-        UpdateCableVisual();
-
-        if (joint != null)
-        {
-            joint.maxDistance = currentLength;
-        }
-    }
-
-    void FixedUpdate()
-    {
-        ApplySwingStabilization();
     }
 
     private void HandleWinchInput()
@@ -87,7 +114,62 @@ public class WinchController : MonoBehaviour
         }
     }
 
-    // --- G�NCELLENM�� YUMU�AK STAB�L�ZE ---
+    // --- NEW: ROPE COLLISION LOGIC ---
+    private void CheckRopeCollision()
+    {
+        // Draw an invisible line from Winch to Hook to see if it hits an 'Obstacle'
+        bool isHit = Physics.Linecast(winchOrigin.position, hookTransform.position, obstacleLayer);
+
+        if (isHit)
+        {
+            // OBSTACLE DETECTED!
+            contactTimer += Time.deltaTime; // Increase timer
+
+            // Change color to RED to warn player
+            cableVisual.startColor = warningColor;
+            cableVisual.endColor = warningColor;
+
+            // If timer exceeds limit -> BREAK THE ROPE
+            if (contactTimer > breakTime)
+            {
+                SnapRope();
+            }
+        }
+        else
+        {
+            // SAFE
+            contactTimer = 0f; // Reset timer
+            cableVisual.startColor = normalColor;
+            cableVisual.endColor = normalColor;
+        }
+    }
+
+    private void SnapRope()
+    {
+        Debug.Log("ROPE SNAPPED! Cable touched an obstacle for too long.");
+
+        // 1. Destroy the joint
+        Destroy(joint);
+        joint = null;
+
+        // 2. Hide the line
+        cableVisual.enabled = false;
+
+        // 3. Drop the cargo (if carrying any)
+        if (hookGrabber != null && hookGrabber.isCarrying)
+        {
+            // We force the hook to drop whatever it holds
+            // (You might need to make DropCargo public in CargoGrabber script)
+            hookGrabber.SendMessage("DropCargo", SendMessageOptions.DontRequireReceiver);
+        }
+
+        // 4. Trigger Game Over (Optional)
+        if (GameManager.Instance != null)
+        {
+            GameManager.Instance.TriggerGameOver();
+        }
+    }
+
     private void ApplySwingStabilization()
     {
         if (hookRb == null) return;
@@ -95,26 +177,16 @@ public class WinchController : MonoBehaviour
         Vector3 directionToHook = (hookTransform.position - winchOrigin.position).normalized;
         float angle = Vector3.Angle(Vector3.down, directionToHook);
 
-        // E�er a�� limiti a��ld�ysa
         if (angle > maxSwingAngle)
         {
-            // 1. Ne kadar a�t�k? (�rn: 65 derece ise fark 5 derecedir)
             float angleDifference = angle - maxSwingAngle;
-
-            // 2. Yumu�ak Kuvvet: Fark ne kadar b�y�kse o kadar it.
-            //    Fark az ise (1 derece), �ok hafif it.
             Vector3 correctionDir = (Vector3.down - directionToHook).normalized;
 
-            // "Stability Gain" ile �arp�yoruz. �rn: 5 * 2 = 10 kuvvet uygula.
             hookRb.AddForce(correctionDir * angleDifference * stabilityGain, ForceMode.Acceleration);
-
-            // 3. H�z �ld�r�c�: S�n�rdayken s�rt�nmeyi art�r ki sekmesin.
-            //    Yumu�ak ge�i� (Lerp) ile s�rt�nmeyi art�r�yoruz.
             hookRb.linearDamping = Mathf.Lerp(hookRb.linearDamping, stabilityDrag, Time.fixedDeltaTime * 5f);
         }
         else
         {
-            // S�n�r�n i�indeysek s�rt�nmeyi yava��a normale d�nd�r
             hookRb.linearDamping = Mathf.Lerp(hookRb.linearDamping, defaultDrag, Time.fixedDeltaTime * 5f);
         }
     }
