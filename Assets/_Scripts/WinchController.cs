@@ -38,6 +38,8 @@ public class WinchController : MonoBehaviour
     // To drop cargo when rope breaks
     private CargoGrabber hookGrabber;
 
+    public AudioSource winchAudio; // Loop ayarlý bir AudioSource
+
     void Start()
     {
         if (hookTransform == null || winchOrigin == null) return;
@@ -98,8 +100,27 @@ public class WinchController : MonoBehaviour
     private void HandleWinchInput()
     {
         float input = 0;
-        if (Input.GetKey(KeyCode.Q)) input = -1;
-        if (Input.GetKey(KeyCode.E)) input = 1;
+        bool isMoving = false; // Hareket var mý?
+
+        if (Input.GetKey(KeyCode.Q)) { input = -1; isMoving = true; }
+        if (Input.GetKey(KeyCode.E)) { input = 1; isMoving = true; }
+
+        // SES MANTIÐI
+        if (winchAudio != null)
+        {
+            if (isMoving)
+            {
+                // Hareket var ve ses çalmýyorsa -> ÇAL
+                if (!winchAudio.isPlaying) winchAudio.Play();
+                // Pitch ile oynayarak hýzý hissettirebilirsin
+                winchAudio.pitch = 1.0f + (winchSpeed * 0.1f);
+            }
+            else
+            {
+                // Hareket durduysa -> SUS
+                winchAudio.Stop();
+            }
+        }
 
         currentLength += input * winchSpeed * Time.deltaTime;
         currentLength = Mathf.Clamp(currentLength, minLength, maxLength);

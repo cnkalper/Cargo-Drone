@@ -16,6 +16,9 @@ public class CargoGrabber : MonoBehaviour
     private GameObject currentCargo;
     private HingeJoint grabJoint;
 
+    public AudioSource hookSource;
+    public AudioClip grabSound;
+
     void Update()
     {
         if (Input.GetKeyDown(KeyCode.Space))
@@ -47,6 +50,8 @@ public class CargoGrabber : MonoBehaviour
 
     private void AttachCargo(GameObject cargo)
     {
+        if (hookSource && grabSound) hookSource.PlayOneShot(grabSound);
+
         if (grabPoint == null) return;
 
         currentCargo = cargo;

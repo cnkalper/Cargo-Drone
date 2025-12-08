@@ -18,6 +18,10 @@ public class DurabilitySystem : MonoBehaviour
     [Tooltip("Drone patlayýnca kancayý da yok etmek için buraya sürükle.")]
     public GameObject connectedHook; // YENÝ: Kanca Referansý
 
+    [Header("Audio Settings")]
+    public AudioSource collisionAudioSource; // Sesi çalacak kaynak
+    public AudioClip[] crashSounds; // Çarpma sesleri (Birden fazla olabilir)
+
     void Start()
     {
         currentHealth = maxHealth;
@@ -27,10 +31,28 @@ public class DurabilitySystem : MonoBehaviour
     {
         float impactForce = collision.relativeVelocity.magnitude;
 
+        // Eðer vuruþ þiddeti, hasar eþiðinden büyükse ses çal
         if (impactForce > impactThreshold)
         {
+            PlayCrashSound(impactForce); // YENÝ: Ses çalma fonksiyonu
+
             float damageAmount = (impactForce - impactThreshold) * damageMultiplier;
             TakeDamage(damageAmount);
+        }
+    }
+
+    private void PlayCrashSound(float force)
+    {
+        if (collisionAudioSource != null && crashSounds.Length > 0)
+        {
+            // Rastgele bir çarpma sesi seç
+            AudioClip clip = crashSounds[Random.Range(0, crashSounds.Length)];
+
+            // Sesi vuruþ þiddetine göre sesli veya sessiz çal (Volume)
+            // Force 20 ise volume 1 olur, 10 ise 0.5 olur.
+            float volume = Mathf.Clamp01(force / 20f);
+
+            collisionAudioSource.PlayOneShot(clip, volume);
         }
     }
 
